@@ -45,6 +45,24 @@ services:
       - db_password
       - wp_admin_password
       - wp_user_password
+  nginx:
+    build:
+      context: ./requirements/nginx
+      dockerfile: Dockerfile
+    image: nginx:inception
+    container_name: nginx
+    restart: unless-stopped
+    depends_on:
+      - wordpress
+    networks:
+      - inception
+    ports:
+      - "443:443"
+    volumes:
+      - wordpress_data:/var/www/html
+    environment:
+      DOMAIN_NAME: ${DOMAIN_NAME}
+
 
 networks:
   inception:
