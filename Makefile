@@ -4,7 +4,16 @@ DATA_PATH   = /home/fgalvez-/data
 
 all: up
 
-setup:
+secrets:
+	@mkdir -p secrets
+	@test -f secrets/db_root_password.txt || openssl rand -base64 24 > secrets/db_root_password.txt
+	@test -f secrets/db_password.txt || openssl rand -base64 24 > secrets/db_password.txt
+	@test -f secrets/wp_admin_password.txt || openssl rand -base64 24 > secrets/wp_admin_password.txt
+	@test -f secrets/wp_user_password.txt || openssl rand -base64 24 > secrets/wp_user_password.txt
+	@chmod 600 secrets/*.txt
+	@echo "Secrets ready in ./secrets"
+
+setup: secrets
 	@mkdir -p $(DATA_PATH)/wordpress
 	@mkdir -p $(DATA_PATH)/mariadb
 
@@ -38,4 +47,4 @@ fclean: clean
 
 re: fclean all
 
-.PHONY: all setup build up down stop start logs ps clean fclean re
+.PHONY: all secrets setup build up down stop start logs ps clean fclean re
