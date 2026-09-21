@@ -150,9 +150,9 @@ cat secrets/wp_admin_password.txt
 
 ### How they reach the containers
 
-The files are mounted as Docker secrets under `/run/secrets/` inside the
-containers that need them, on a memory-backed filesystem. They are not stored in
-any image and are not visible in the container's environment variables.
+The files are mounted as Docker secrets under `/run/secrets/`, read-only, and
+only inside the containers that need them. They are not stored in any image and
+are not visible in the container's environment variables.
 
 To confirm:
 

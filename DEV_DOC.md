@@ -116,16 +116,17 @@ clone.
 
 ### Why the Makefile passes `--env-file` explicitly
 
-Compose looks for `.env` in the directory the command is invoked from, not next
-to the compose file. Since the Makefile runs from the repository root while
-`.env` lives in `srcs/`, the path must be given explicitly:
+Where Compose looks for `.env` by default depends on the Compose version and on
+how it is invoked. Passing the path explicitly removes that dependency, so the
+Makefile behaves the same whatever the version and whatever directory it is
+run from:
 
 ```makefile
 COMPOSE = docker compose -f srcs/docker-compose.yml --env-file srcs/.env
 ```
 
-Without this, `${DATA_PATH}` would expand to an empty string and the volumes
-would fail to mount.
+If `.env` were not found, `${DATA_PATH}` would expand to an empty string and
+the volumes would fail to mount.
 
 ### Why `setup` creates the directories
 
@@ -329,8 +330,8 @@ return a 502.
 **`missing separator` from make.** Recipe lines require a tab character, not
 spaces.
 
-**`${DATA_PATH}` not expanded.** Compose is not finding `.env`. Run from the
-repository root through the Makefile, or pass `--env-file srcs/.env`.
+**`${DATA_PATH}` not expanded.** Compose is not finding `.env`. Run through the
+Makefile, or pass `--env-file srcs/.env` explicitly.
 
 **Container exits immediately.** Read `docker logs <name>`. The usual causes are
 a service that daemonised instead of staying in the foreground, or a missing

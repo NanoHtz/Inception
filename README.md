@@ -158,9 +158,13 @@ Environment variables are convenient but leak. They are visible through
 instruction, they can be read from `/proc/<pid>/environ` by any process in the
 container, and they are inherited by every child process.
 
-Docker secrets are mounted as files under `/run/secrets/` on a tmpfs, so they
-never touch the container's disk, never appear in an image layer, and are only
-visible to the containers that explicitly declare them.
+Docker secrets are files mounted read-only under `/run/secrets/`, and only into
+the containers that explicitly declare them. They never appear in the
+container's environment, in the `Env` section of `docker inspect`, or in any
+image layer. Note that with plain Docker Compose (without Swarm) a file-based
+secret is a read-only mount of the host file: it is neither encrypted nor held
+in memory. Protecting the host file is therefore part of the design, which is
+why the files in `secrets/` are `chmod 600` and excluded from git.
 
 This project splits values by nature rather than by convenience: names and
 identifiers live in `.env` as environment variables, while every password is a
