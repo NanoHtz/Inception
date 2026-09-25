@@ -95,6 +95,30 @@ services:
     restart: unless-stopped
     networks:
       - inception
+  ftp:
+    build:
+      context: ./requirements/bonus/ftp
+      dockerfile: Dockerfile
+    image: ftp:inception
+    container_name: ftp
+    cap_add:
+      - DAC_READ_SEARCH
+      - SYS_NICE
+      - AUDIT_WRITE
+    restart: unless-stopped
+    depends_on:
+      - wordpress
+    networks:
+      - inception
+    ports:
+      - "21:21"
+      - "30000-30009:30000-30009"
+    volumes:
+      - wordpress_data:/var/www/html
+    environment:
+      FTP_USER: ${FTP_USER}
+    secrets:
+      - ftp_password
   backup:
     build:
       context: ./requirements/bonus/backup
@@ -150,4 +174,5 @@ secrets:
     file: ../secrets/wp_admin_password.txt
   wp_user_password:
     file: ../secrets/wp_user_password.txt
-
+  ftp_password:
+    file: ../secrets/ftp_password.txt
