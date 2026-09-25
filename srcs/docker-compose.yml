@@ -86,6 +86,16 @@ services:
       - inception
     ports:
       - "8080:8080"
+  redis:
+    build:
+      context: ./requirements/bonus/redis
+      dockerfile: Dockerfile
+    image: redis:inception
+    container_name: redis
+    restart: unless-stopped
+    networks:
+      - inception
+
 networks:
   inception:
     driver: bridge

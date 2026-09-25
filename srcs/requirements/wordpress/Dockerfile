@@ -9,6 +9,7 @@ RUN apt-get update && \
         php8.2-mbstring \
         php8.2-xml \
         php8.2-zip \
+        php8.2-redis \
         curl \
         ca-certificates \
         mariadb-client && \

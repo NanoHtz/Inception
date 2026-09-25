@@ -41,7 +41,12 @@ if [ ! -f /var/www/html/wp-config.php ]; then
         "${WP_USER}" "${WP_USER_EMAIL}" \
         --role=author \
         --user_pass="${WP_USER_PASS}"
+    wp config set WP_REDIS_HOST "redis" --allow-root --path=/var/www/html
+    wp config set WP_REDIS_PORT 6379 --raw --allow-root --path=/var/www/html
+    wp config set WP_CACHE true --raw --allow-root --path=/var/www/html
 
+    wp plugin install redis-cache --activate --allow-root --path=/var/www/html
+    wp redis enable --allow-root --path=/var/www/html
     chown -R www-data:www-data /var/www/html
     echo "[entrypoint] WordPress instalado correctamente"
 else
