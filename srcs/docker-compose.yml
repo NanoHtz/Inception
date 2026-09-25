@@ -62,7 +62,17 @@ services:
       - wordpress_data:/var/www/html
     environment:
       DOMAIN_NAME: ${DOMAIN_NAME}
-
+  static:
+    build:
+      context: ./requirements/bonus/static
+      dockerfile: Dockerfile
+    image: static:inception
+    container_name: static
+    restart: unless-stopped
+    networks:
+      - inception
+    ports:
+      - "8081:8081"
 
 networks:
   inception:
