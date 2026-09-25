@@ -73,7 +73,19 @@ services:
       - inception
     ports:
       - "8081:8081"
-
+  adminer:
+    build:
+      context: ./requirements/bonus/adminer
+      dockerfile: Dockerfile
+    image: adminer:inception
+    container_name: adminer
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    networks:
+      - inception
+    ports:
+      - "8080:8080"
 networks:
   inception:
     driver: bridge
