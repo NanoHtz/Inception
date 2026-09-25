@@ -1,3 +1,4 @@
+
 NAME        = inception
 COMPOSE     = docker compose -f srcs/docker-compose.yml --env-file srcs/.env
 DATA_PATH   = /home/fgalvez-/data
@@ -16,6 +17,7 @@ secrets:
 setup: secrets
 	@mkdir -p $(DATA_PATH)/wordpress
 	@mkdir -p $(DATA_PATH)/mariadb
+	@mkdir -p $(DATA_PATH)/backup
 
 build: setup
 	$(COMPOSE) build

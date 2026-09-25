@@ -95,6 +95,26 @@ services:
     restart: unless-stopped
     networks:
       - inception
+  backup:
+    build:
+      context: ./requirements/bonus/backup
+      dockerfile: Dockerfile
+    image: backup:inception
+    container_name: backup
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    networks:
+      - inception
+    volumes:
+      - backup_data:/backups
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_HOST: mariadb
+      RETENTION_DAYS: ${RETENTION_DAYS}
+    secrets:
+      - db_password
 
 networks:
   inception:
@@ -114,6 +134,12 @@ volumes:
       type: none
       o: bind
       device: ${DATA_PATH}/mariadb
+  backup_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/backup
 
 secrets:
   db_root_password:
