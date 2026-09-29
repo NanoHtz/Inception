@@ -8,8 +8,10 @@ and operate the stack, not to modify it. For development details, see
 
 ## 1. What this stack provides
 
-Running this project starts a complete WordPress website served over HTTPS. It
-is made of three services, each in its own container:
+Running this project starts a complete WordPress website served over HTTPS,
+plus a set of supporting services. Each one runs in its own container.
+
+Core services:
 
 | Container | What it does | Reachable from |
 |---|---|---|
@@ -17,16 +19,27 @@ is made of three services, each in its own container:
 | `wordpress` | Runs the WordPress code through PHP-FPM | Internal network only |
 | `mariadb` | Stores all site content, users and settings | Internal network only |
 
-Only NGINX is exposed. The database and the PHP interpreter cannot be reached
-from outside the Docker network, which limits the attack surface to a single
-entry point.
+Additional services:
 
-Two named volumes keep the data safe across restarts:
+| Container | What it does | Reachable from |
+|---|---|---|
+| `redis` | Caches database queries so pages load with fewer queries | Internal network only |
+| `adminer` | Web interface to browse and edit the database | The host, on port 8080 |
+| `static` | A small static site, unrelated to WordPress | The host, on port 8081 |
+| `ftp` | Upload and download files of the WordPress site | The host, on port 21 |
+| `backup` | Dumps the database on a schedule and rotates old copies | Internal network only |
+
+The WordPress site itself is only reachable through NGINX on port 443. The
+database and the PHP interpreter cannot be reached from outside the Docker
+network at all.
+
+Three named volumes keep the data safe across restarts:
 
 | Volume | Contains | Stored on the host at |
 |---|---|---|
 | `mariadb_data` | The WordPress database | `/home/fgalvez-/data/mariadb` |
 | `wordpress_data` | Site files, themes, plugins, uploads | `/home/fgalvez-/data/wordpress` |
+| `backup_data` | Compressed database dumps | `/home/fgalvez-/data/backup` |
 
 ---
 
@@ -50,7 +63,7 @@ volumes already hold the data.
 make ps
 ```
 
-All three containers should report `running`.
+All containers should report `running`.
 
 ### Stop temporarily
 
@@ -123,6 +136,34 @@ Two accounts exist:
 | `fgalvez` | Administrator | Full control: pages, posts, users, settings |
 | `redactor` | Author | Write and publish its own posts, leave comments |
 
+### The other services
+
+**Adminer**, at `http://localhost:8080`. Log in with:
+
+| Field | Value |
+|---|---|
+| System | MySQL |
+| Server | `mariadb` |
+| Username | the value of `MYSQL_USER` in `srcs/.env` |
+| Password | the contents of `secrets/db_password.txt` |
+| Database | `wordpress` |
+
+The server field is the container name, not an address: Docker's internal DNS
+resolves it.
+
+**The static site**, at `http://localhost:8081`. Plain HTTP, no login.
+
+**FTP**, at `localhost` port 21, user `ftpuser`, password in
+`secrets/ftp_password.txt`. Use passive mode; with the command-line client,
+`ftp -p localhost`. It opens directly on the WordPress site files.
+
+**Backups** are written automatically every 30 minutes to
+`/home/fgalvez-/data/backup`. To take one immediately:
+
+```bash
+docker exec backup /usr/local/bin/backup.sh
+```
+
 ---
 
 ## 4. Managing credentials
@@ -138,6 +179,7 @@ root of the repository:
 | `db_password.txt` | The database user WordPress connects with |
 | `wp_admin_password.txt` | The WordPress administrator |
 | `wp_user_password.txt` | The second WordPress user |
+| `ftp_password.txt` | The FTP account |
 
 These files are readable only by their owner (`chmod 600`) and are excluded from
 version control. They are never committed.
@@ -209,7 +251,9 @@ Healthy output looks like this:
 - `mariadb` ends with `ready for connections`
 - `wordpress` ends with the installation message, or reports that WordPress is
   already installed
-- `nginx` is normally silent unless there is traffic or an error
+- `nginx` and `static` are normally silent unless there is traffic or an error
+- `ftp` ends with `Iniciando pure-ftpd`
+- `backup` reports the size of the dump it created on startup
 
 ### The site responds over HTTPS
 
@@ -251,9 +295,38 @@ Expected: the list of WordPress tables.
 ```bash
 ls /home/fgalvez-/data/mariadb
 ls /home/fgalvez-/data/wordpress
+ls /home/fgalvez-/data/backup
 ```
 
-Both should be populated.
+All three should be populated.
+
+### The cache is working
+
+```bash
+docker exec wordpress wp redis status --allow-root --path=/var/www/html
+```
+
+Expected: `Status: Connected` and `Drop-in: Valid`. To see the cache in use:
+
+```bash
+docker exec redis redis-cli FLUSHALL
+docker exec redis redis-cli CONFIG RESETSTAT
+curl -k -s https://fgalvez-.42.fr > /dev/null
+curl -k -s https://fgalvez-.42.fr > /dev/null
+docker exec redis redis-cli INFO stats | grep keyspace
+```
+
+The hits come from the second request, which was answered from memory instead of
+querying the database.
+
+### Backups exist and are readable
+
+```bash
+docker exec backup ls -lh /backups/
+docker exec backup sh -c 'zcat /backups/*.sql.gz | head -20'
+```
+
+Expected: one or more `.sql.gz` files of a few kilobytes, containing SQL.
 
 ---
 

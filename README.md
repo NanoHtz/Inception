@@ -8,20 +8,33 @@ Inception is a system administration project that builds a small web
 infrastructure from scratch using Docker and Docker Compose, running inside a
 dedicated virtual machine.
 
-The stack serves a WordPress website over HTTPS. It is composed of three
-services, each isolated in its own container, each built from a hand-written
-Dockerfile based on Debian 12 (bookworm):
+The stack serves a WordPress website over HTTPS. Every service runs isolated in
+its own container, each built from a hand-written Dockerfile based on Debian 12
+(bookworm).
+
+Mandatory services:
 
 | Service | Role |
 |---|---|
-| `nginx` | Reverse proxy and TLS termination. The only entry point, on port 443. |
+| `nginx` | Reverse proxy and TLS termination. The only entry point of the mandatory infrastructure, on port 443. |
 | `wordpress` | WordPress with PHP-FPM. No web server inside. |
 | `mariadb` | Database server. No web server inside. |
 
-The containers communicate over a user-defined Docker bridge network. Two named
-volumes provide persistence for the database and for the website files, both
-backed by `/home/fgalvez-/data` on the host. All credentials are handled through
-Docker secrets and are never committed to this repository.
+Bonus services:
+
+| Service | Role | Exposed on |
+|---|---|---|
+| `redis` | Object cache for WordPress | internal only |
+| `adminer` | Web interface to manage the database | 8080 |
+| `static` | Static showcase site in HTML and CSS, no PHP | 8081 |
+| `ftp` | pure-ftpd server pointing to the WordPress volume | 21 and 30000-30009 |
+| `backup` | Scheduled database dumps with rotation | internal only |
+
+The containers communicate over a user-defined Docker bridge network. Three
+named volumes provide persistence for the database, for the website files and
+for the backups, all backed by `/home/fgalvez-/data` on the host. All
+credentials are handled through Docker secrets and are never committed to this
+repository.
 
 No pre-built images are pulled from Docker Hub other than the official Debian
 base image, as required by the subject.
@@ -60,6 +73,17 @@ data directories on the host, builds the three images and starts the stack.
 Then open `https://fgalvez-.42.fr` in a browser. The TLS certificate is
 self-signed, so the browser will display a warning that must be accepted.
 
+The bonus services are reachable at:
+
+| Service | Address |
+|---|---|
+| Adminer | `http://localhost:8080` |
+| Static site | `http://localhost:8081` |
+| FTP | `ftp://localhost:21`, user `ftpuser`, passive mode |
+
+The subject allows extra ports for the bonus part, so these do not go through
+NGINX. Only the mandatory infrastructure is restricted to port 443.
+
 ### Available targets
 
 | Target | Effect |
@@ -91,6 +115,13 @@ itself is PID 1 and receives signals directly.
   WP-CLI on first run, then execs `php-fpm8.2 -F`.
 - NGINX generates a self-signed certificate at build time and runs with
   `daemon off;`.
+- Redis runs with `daemonize no` and no persistence, since a cache must not
+  survive a restart: the authoritative data lives in MariaDB.
+- Adminer is served by PHP's built-in server, which stays in the foreground.
+- The backup service runs `cron -f`, a real daemon in foreground mode, rather
+  than a loop.
+- pure-ftpd runs in the foreground with virtual users, so no PAM or system
+  account is involved.
 
 Both application entry points are idempotent: they detect an already-initialised
 volume and skip the setup, which is what makes the stack survive a reboot.
@@ -102,8 +133,10 @@ Makefile                 Single entry point for the whole stack
 secrets/                 Credentials, generated locally, never committed
 srcs/.env                Non-sensitive configuration
 srcs/docker-compose.yml  Infrastructure definition
-srcs/requirements/       One directory per service, each with its Dockerfile,
-                         its configuration files and its entry point script
+srcs/requirements/       One directory per mandatory service, each with its
+                         Dockerfile, its configuration files and its entry
+                         point script
+srcs/requirements/bonus/ Same layout for each bonus service
 ```
 
 ### Main design choices
@@ -123,8 +156,23 @@ builds non-reproducible.
 
 **Waiting for the database in the entry point rather than relying on
 `depends_on`.** `depends_on` only orders container startup; it does not wait for
-the service inside to become ready. The WordPress entry point polls the database
-with a bounded retry loop and fails after a fixed number of attempts.
+the service inside to become ready. The WordPress and backup entry points poll
+the database with a bounded retry loop and fail after a fixed number of
+attempts.
+
+**pure-ftpd rather than vsftpd.** vsftpd relies heavily on privilege-separation
+mechanisms that conflict with the ones Docker already applies, and fails with
+opaque errors inside a container. pure-ftpd works once three capabilities are
+granted (`DAC_READ_SEARCH`, `SYS_NICE`, `AUDIT_WRITE`), which is the minimal set
+it needs to drop its own privileges. Granting exactly those, rather than
+`privileged: true`, keeps the rest of the container isolation intact.
+
+**Backups as the free-choice bonus service.** A volume protects data against the
+container being destroyed; it does not protect against accidental deletion,
+corruption or human error. The backup service covers that second case with
+`mariadb-dump`, gzip compression and time-based rotation. The dump script uses
+`set -o pipefail` and checks the resulting file size, because a backup that
+fails silently is worse than no backup at all.
 
 ### Virtual Machines vs Docker
 

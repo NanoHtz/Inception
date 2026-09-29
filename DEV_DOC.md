@@ -78,13 +78,17 @@ make
 | `WP_TITLE` | Site title |
 | `WP_ADMIN_USER`, `WP_ADMIN_EMAIL` | WordPress administrator |
 | `WP_USER`, `WP_USER_EMAIL` | Second WordPress user |
-| `DATA_PATH` | Host directory backing both volumes |
+| `FTP_USER` | FTP account name |
+| `RETENTION_DAYS` | Days a database dump is kept before rotation |
+| `DATA_PATH` | Host directory backing every volume |
 
 The administrator username must not contain `admin` or `administrator` in any
 form; this is a hard requirement of the subject.
 
-**`secrets/`** holds the passwords and is excluded from version control. The
-files are generated automatically by `make` if they are absent:
+**`secrets/`** holds the five passwords (MariaDB root, MariaDB application user,
+WordPress administrator, WordPress author, FTP account) and is excluded from
+version control. The files are generated automatically by `make` if they are
+absent:
 
 ```bash
 make secrets
@@ -93,6 +97,10 @@ make secrets
 Existing files are never overwritten. Template files with the `.example`
 extension are versioned so that the expected structure is visible in a fresh
 clone.
+
+Note that `ftp_password.txt` is generated without `/`, `+` or `=`. pure-pw
+receives the password through a pipe when the container first starts, and those
+characters proved unreliable there.
 
 ---
 
@@ -168,7 +176,13 @@ docker stats                   # live resource usage
 docker exec -it mariadb bash
 docker exec -it wordpress bash
 docker exec -it nginx bash
+docker exec -it redis bash
+docker exec -it backup bash
+docker exec -it ftp bash
 ```
+
+Note that `adminer` and `static` ship without a shell's usual tooling; use
+`docker logs` for them instead.
 
 ### Checking PID 1
 
@@ -228,10 +242,17 @@ Shows which containers are attached and their addresses on the bridge.
 |---|---|---|
 | `mariadb_data` | `/var/lib/mysql` | `/home/fgalvez-/data/mariadb` |
 | `wordpress_data` | `/var/www/html` | `/home/fgalvez-/data/wordpress` |
+| `backup_data` | `/backups` | `/home/fgalvez-/data/backup` |
 
-`wordpress_data` is mounted by **two** containers: by `wordpress`, which runs the
-PHP code, and by `nginx`, which needs to read the static assets and serve them
-directly without involving PHP.
+`wordpress_data` is mounted by **three** containers: by `wordpress`, which runs
+the PHP code; by `nginx`, which needs to read the static assets and serve them
+directly without involving PHP; and by `ftp`, which exposes those same files for
+upload and download.
+
+Redis deliberately has no volume. A cache must not survive a restart: the
+authoritative data lives in MariaDB, and Redis simply refills itself. The static
+site has no volume either, since its content is baked into the image at build
+time and never changes at runtime.
 
 ### How persistence works
 
@@ -296,6 +317,12 @@ The three services follow the same layout under `srcs/requirements/<service>/`:
 | TLS protocol versions | `nginx/conf/nginx.conf` (`ssl_protocols`) |
 | Database bind address or tuning | `mariadb/conf/50-server.cnf` |
 | Database or user names | `srcs/.env` |
+| Cache size or eviction policy | `bonus/redis/conf/redis.conf` |
+| Static site content | `bonus/static/site/` |
+| Static site port | `bonus/static/conf/static.conf` and the compose file |
+| Backup schedule | `bonus/backup/conf/backup.cron` |
+| Backup retention | `RETENTION_DAYS` in `srcs/.env` |
+| FTP passive port range | `bonus/ftp/tools/entrypoint.sh` and the compose file |
 
 ### Applying a change
 
@@ -347,3 +374,19 @@ is running and that the port in `fastcgi_pass` matches the one in `www.conf`.
 
 **Build hangs during `apt-get install`.** A package is waiting on an interactive
 prompt. Ensure `DEBIAN_FRONTEND=noninteractive` is set on the install command.
+
+**pure-ftpd exits with `421 Unable to switch capabilities`.** The container is
+missing the capabilities pure-ftpd needs to drop its own privileges. The service
+declares `cap_add: [DAC_READ_SEARCH, SYS_NICE, AUDIT_WRITE]` for that reason.
+
+**FTP connects but data transfers hang.** The passive port range must be
+published in the compose file and match the range passed to `pure-ftpd -p`.
+
+**The backup file is suspiciously small.** The dump failed. The script exits
+with an error when the output is under 1 kB, precisely so that a silent failure
+does not pass for a valid backup. Check that the database user in `srcs/.env`
+can reach `mariadb`.
+
+**Redis reports `Drop-in: Invalid`.** The `object-cache.php` drop-in is missing
+or outdated. Regenerate it with
+`docker exec wordpress wp redis enable --allow-root --path=/var/www/html`.
