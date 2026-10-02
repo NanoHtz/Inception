@@ -1,30 +1,21 @@
 # Developer documentation
 
-This document describes how to set up, build and work on the project. For
-day-to-day operation, see `USER_DOC.md`.
+How to set the project up, build it and work on it. For day-to-day operation
+see `USER_DOC.md`.
 
----
+## Setting up from scratch
 
-## 1. Setting up the environment from scratch
+The project has to run inside a Linux virtual machine. It was developed on
+Debian 12 under VirtualBox, with no desktop environment installed: only the SSH
+server and the standard system utilities.
 
-### Prerequisites
+You need Docker Engine and the Compose plugin, `make`, `openssl`, and sudo
+rights. `make` in particular is not there by default on a minimal Debian, which
+is easy to forget.
 
-The project must run inside a Linux virtual machine. It was developed on Debian
-12 (bookworm) under VirtualBox.
-
-Required on the machine:
-
-| Requirement | Why |
-|---|---|
-| Docker Engine | Builds and runs the containers |
-| Docker Compose plugin (v2) | The project uses `docker compose`, not `docker-compose` |
-| `make` | Not installed by default on a minimal Debian |
-| `openssl` | Generates the secret files |
-| `sudo` | Needed by `make fclean` to remove root-owned volume data |
-
-Note that the `docker.io` package shipped by Debian provides Compose v1, invoked
-with a hyphen. This project requires v2, which comes from Docker's own
-repository:
+One thing worth getting right from the start: the Debian package `docker.io`
+ships Compose version 1, the Python one invoked with a hyphen. This project
+needs version 2, which comes from Docker's own repository:
 
 ```bash
 sudo apt update && sudo apt install -y ca-certificates curl gnupg make
@@ -40,353 +31,204 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 sudo usermod -aG docker $USER
 ```
 
-Log out and back in for the group change to apply. Verify:
+Log out and back in for the group change to take effect, then check with
+`docker compose version`. If it answers, you have v2.
 
-```bash
-docker compose version
-```
+Worth knowing: being in the `docker` group is effectively root, since any member
+can mount the host filesystem inside a container. On a disposable development VM
+that is an acceptable trade.
 
-Note that membership of the `docker` group is equivalent to root privileges, as
-any member can mount the host filesystem inside a container. This is acceptable
-on a disposable development VM.
-
-### Host configuration
-
-The domain must resolve to the loopback address:
+The domain also needs to resolve locally:
 
 ```bash
 echo "127.0.0.1 fgalvez-.42.fr" | sudo tee -a /etc/hosts
 ```
 
-### Clone and run
+After that it is just clone and build.
 
-```bash
-git clone <repository-url> inception
-cd inception
-make
-```
+## Configuration
 
-### Configuration files
-
-**`srcs/.env`** holds non-sensitive configuration and is versioned:
-
-| Variable | Purpose |
-|---|---|
-| `DOMAIN_NAME` | Site domain, used by NGINX and by WordPress |
-| `MYSQL_DATABASE` | Database name |
-| `MYSQL_USER` | Database user WordPress connects with |
-| `WP_TITLE` | Site title |
-| `WP_ADMIN_USER`, `WP_ADMIN_EMAIL` | WordPress administrator |
-| `WP_USER`, `WP_USER_EMAIL` | Second WordPress user |
-| `FTP_USER` | FTP account name |
-| `RETENTION_DAYS` | Days a database dump is kept before rotation |
-| `DATA_PATH` | Host directory backing every volume |
+`srcs/.env` holds everything that is not sensitive and is versioned:
+`DOMAIN_NAME`, the database name and user, the WordPress title and the two
+account names with their emails, the FTP user, how many days backups are kept,
+and `DATA_PATH`, the host directory all three volumes are backed by.
 
 The administrator username must not contain `admin` or `administrator` in any
-form; this is a hard requirement of the subject.
+form. That is a hard requirement of the subject, not a style preference.
 
-**`secrets/`** holds the five passwords (MariaDB root, MariaDB application user,
-WordPress administrator, WordPress author, FTP account) and is excluded from
-version control. The files are generated automatically by `make` if they are
-absent:
+`secrets/` holds the five passwords and is excluded from version control. They
+are generated automatically by `make` if they are absent, or on demand with
+`make secrets`. Existing files are never overwritten. The `.example` templates
+are versioned so the expected structure is visible in a fresh clone.
 
-```bash
-make secrets
-```
+The FTP password is generated without `/`, `+` or `=`. pure-pw receives it
+through a pipe when the container first starts, and those characters turned out
+to be unreliable there.
 
-Existing files are never overwritten. Template files with the `.example`
-extension are versioned so that the expected structure is visible in a fresh
-clone.
+## Building and running
 
-Note that `ftp_password.txt` is generated without `/`, `+` or `=`. pure-pw
-receives the password through a pipe when the container first starts, and those
-characters proved unreliable there.
+The Makefile targets are straightforward. `all` and `up` do the same thing:
+generate secrets, create the data directories, build and start. `build` builds
+without starting. `down`, `stop`, `start`, `logs` and `ps` do what they say.
+`clean` takes everything down and prunes images and build cache. `fclean` goes
+further and removes the volumes and the host data. `re` is `fclean` then `all`.
 
----
+Two details in there are not obvious.
 
-## 2. Building and launching
+The Makefile passes `--env-file srcs/.env` explicitly. Where Compose looks for
+`.env` by default depends on the version and on how it was invoked, and being
+explicit removes that dependency entirely. If the file is not found,
+`${DATA_PATH}` expands to an empty string and the volumes fail to mount, which
+is a confusing way to discover the problem.
 
-### Makefile targets
+And `setup` runs before every `up` because the volumes use `driver_opts` with
+`type: none`. That means Docker binds a directory that must already exist rather
+than creating one, so a missing directory stops the container from starting.
 
-| Target | Command it runs |
-|---|---|
-| `all` / `up` | Generates secrets, creates data directories, `docker compose up -d --build` |
-| `secrets` | Creates any missing secret file |
-| `setup` | Creates the host data directories |
-| `build` | Builds the images without starting them |
-| `down` | `docker compose down` |
-| `stop` / `start` | Pauses and resumes the containers |
-| `logs` | Follows all logs |
-| `ps` | Container state |
-| `clean` | `down` plus `docker system prune -af` |
-| `fclean` | `clean` plus volume removal and deletion of host data |
-| `re` | `fclean` then `all` |
-
-### Why the Makefile passes `--env-file` explicitly
-
-Where Compose looks for `.env` by default depends on the Compose version and on
-how it is invoked. Passing the path explicitly removes that dependency, so the
-Makefile behaves the same whatever the version and whatever directory it is
-run from:
-
-```makefile
-COMPOSE = docker compose -f srcs/docker-compose.yml --env-file srcs/.env
-```
-
-If `.env` were not found, `${DATA_PATH}` would expand to an empty string and
-the volumes would fail to mount.
-
-### Why `setup` creates the directories
-
-The volumes use `driver_opts` with `type: none`, which means Docker binds an
-existing host directory rather than creating one. If the directory is missing,
-the container fails to start. `setup` runs before every `up` for that reason.
-
-### Useful Compose commands
+For working directly with Compose rather than through the Makefile, the useful
+one is:
 
 ```bash
 docker compose -f srcs/docker-compose.yml --env-file srcs/.env config
-docker compose -f srcs/docker-compose.yml --env-file srcs/.env build nginx
-docker compose -f srcs/docker-compose.yml --env-file srcs/.env up -d wordpress
-docker compose -f srcs/docker-compose.yml --env-file srcs/.env restart nginx
 ```
 
-`config` is particularly useful: it prints the fully resolved file with all
-variables expanded, which is the quickest way to confirm that `.env` is being
-read.
+It prints the fully resolved file with every variable expanded, which is the
+fastest way to confirm `.env` is being read and that the YAML is valid.
 
----
+## Poking at the running stack
 
-## 3. Managing containers and volumes
+The usual inspection commands all work: `docker ps`, `docker images`,
+`docker network ls`, `docker volume ls`, `docker stats`.
 
-### Inspection
+To get inside a container, `docker exec -it <name> bash`. That works for
+mariadb, wordpress, nginx, redis, backup and ftp. The adminer and static
+containers are deliberately minimal and do not have much tooling, so
+`docker logs` is the way with those.
 
-```bash
-docker ps                      # running containers
-docker ps -a                   # including stopped ones
-docker images                  # built images
-docker network ls              # networks
-docker volume ls               # volumes
-docker stats                   # live resource usage
-```
-
-### Entering a container
-
-```bash
-docker exec -it mariadb bash
-docker exec -it wordpress bash
-docker exec -it nginx bash
-docker exec -it redis bash
-docker exec -it backup bash
-docker exec -it ftp bash
-```
-
-Note that `adminer` and `static` ship without a shell's usual tooling; use
-`docker logs` for them instead.
-
-### Checking PID 1
+To check that the right process is PID 1:
 
 ```bash
 docker exec wordpress ps aux
 ```
 
-The service itself must appear with PID 1. If a shell holds PID 1 instead, the
-entry point is using the shell form and signals will not reach the service.
+The service itself must be PID 1. If a shell holds it instead, the entry point
+is using the shell form and signals will never reach the service.
 
-### Database access
+For the database:
 
 ```bash
 docker exec -it mariadb mysql -u root -p"$(cat secrets/db_root_password.txt)"
 ```
 
-Or as the application user:
+WP-CLI is installed inside the WordPress container, so things like
+`docker exec wordpress wp user list --allow-root --path=/var/www/html` work.
 
-```bash
-docker exec -it mariadb mysql -u "$(grep MYSQL_USER srcs/.env | cut -d= -f2)" \
-  -p"$(cat secrets/db_password.txt)" wordpress
-```
+`docker volume inspect inception_mariadb_data` shows the host path backing the
+volume in its `Options.device` field, and `docker network inspect
+inception_inception` shows which containers are attached and at which addresses.
 
-### WP-CLI
+## Where the data lives
 
-WP-CLI is installed inside the WordPress container:
+The database sits in `/home/fgalvez-/data/mariadb`, mounted at
+`/var/lib/mysql`. The site files sit in `/home/fgalvez-/data/wordpress`, mounted
+at `/var/www/html`. The backups go to `/home/fgalvez-/data/backup`, mounted at
+`/backups`.
 
-```bash
-docker exec wordpress wp core version --allow-root --path=/var/www/html
-docker exec wordpress wp user list --allow-root --path=/var/www/html
-docker exec wordpress wp plugin list --allow-root --path=/var/www/html
-```
-
-### Volume inspection
-
-```bash
-docker volume inspect inception_mariadb_data
-```
-
-The `Options.device` field shows the host path backing the volume.
-
-### Network inspection
-
-```bash
-docker network inspect inception_inception
-```
-
-Shows which containers are attached and their addresses on the bridge.
-
----
-
-## 4. Where the data lives and how it persists
-
-### Layout
-
-| Volume | Mount point in container | Host directory |
-|---|---|---|
-| `mariadb_data` | `/var/lib/mysql` | `/home/fgalvez-/data/mariadb` |
-| `wordpress_data` | `/var/www/html` | `/home/fgalvez-/data/wordpress` |
-| `backup_data` | `/backups` | `/home/fgalvez-/data/backup` |
-
-`wordpress_data` is mounted by **three** containers: by `wordpress`, which runs
-the PHP code; by `nginx`, which needs to read the static assets and serve them
-directly without involving PHP; and by `ftp`, which exposes those same files for
+The WordPress volume is mounted by three containers, not one: by `wordpress`
+which runs the PHP, by `nginx` which reads the static assets and serves them
+without involving PHP at all, and by `ftp` which exposes the same files for
 upload and download.
 
-Redis deliberately has no volume. A cache must not survive a restart: the
-authoritative data lives in MariaDB, and Redis simply refills itself. The static
-site has no volume either, since its content is baked into the image at build
-time and never changes at runtime.
+Redis has no volume on purpose. A cache must not survive a restart; the real
+data is in MariaDB and Redis refills itself. The static site has none either,
+since its content is baked into the image at build time and never changes at
+runtime.
 
-### How persistence works
-
-Both entry points are idempotent and detect existing data:
-
-- `mariadb` checks whether `/var/lib/mysql/${MYSQL_DATABASE}` exists. If it does,
-  initialisation is skipped.
-- `wordpress` checks whether `/var/www/html/wp-config.php` exists. If it does,
-  installation is skipped.
-
-This is what allows the containers to be destroyed and recreated freely. It can
-be verified directly:
+Persistence works because the entry points are idempotent. MariaDB checks
+whether its database directory exists, WordPress checks for `wp-config.php`,
+and both skip initialisation if the data is already there. You can watch it
+happen:
 
 ```bash
 make down && make
 docker logs mariadb | head -3
 ```
 
-The log should report that the database already exists.
+The log should report that the database already exists rather than
+initialising it again.
 
-### Backing up
-
-Since both volumes are backed by ordinary host directories, a backup is a plain
-copy:
+For a backup, the volumes are ordinary host directories, so a copy is enough:
 
 ```bash
 sudo tar czf backup-$(date +%F).tar.gz -C /home/fgalvez- data
 ```
 
-For a consistent database dump, prefer:
+Though for a consistent database snapshot, `mysqldump` through the backup
+container is better.
 
-```bash
-docker exec mariadb mysqldump -u root -p"$(cat secrets/db_root_password.txt)" \
-  wordpress > wordpress-backup.sql
-```
+Finally, `make fclean` empties `/home/fgalvez-/data` and removes the volumes.
+There is no undo.
 
-### What `fclean` destroys
+## Changing something
 
-`make fclean` removes the volumes and empties `/home/fgalvez-/data`. Both the
-database and the site content are lost. There is no undo.
+Every service lives under `srcs/requirements/<service>/` with the same layout:
+the `Dockerfile`, a `.dockerignore` controlling what enters the build context,
+a `conf/` directory for configuration files copied into the image, and a
+`tools/` directory for the entry point script where one exists. Bonus services
+sit under `requirements/bonus/`.
 
----
+PHP-FPM settings, including its port and the process manager, are in
+`wordpress/conf/www.conf`. Where NGINX forwards PHP requests is the
+`fastcgi_pass` line in `nginx/conf/nginx.conf`, and the TLS protocol versions
+are a few lines above it. Database tuning and the bind address are in
+`mariadb/conf/50-server.cnf`. Published ports are in the compose file, and
+names and identifiers in `srcs/.env`.
 
-## 5. Modifying a service
+For the bonus services: the cache size and eviction policy are in
+`bonus/redis/conf/redis.conf`, the static site's content in
+`bonus/static/site/` and its port in `bonus/static/conf/static.conf`, the
+backup schedule in `bonus/backup/conf/backup.cron` with retention controlled by
+`RETENTION_DAYS` in `.env`, and the FTP passive port range in both the entry
+point and the compose file.
 
-The three services follow the same layout under `srcs/requirements/<service>/`:
+Configuration files are copied into the image with `COPY`, so changing one
+means rebuilding: `make down && make`. Changes limited to `.env` or to the
+compose file only need the containers recreated, since nothing is rebuilt.
 
-| Path | Contents |
-|---|---|
-| `Dockerfile` | Image definition |
-| `.dockerignore` | Files excluded from the build context |
-| `conf/` | Configuration files copied into the image |
-| `tools/` | Entry point script, where applicable |
+As a worked example, moving PHP-FPM from port 9000 to something else means
+changing `listen` in `www.conf`, updating `EXPOSE` in the Dockerfile to match
+for consistency, and changing `fastcgi_pass` in the NGINX config to the same
+port. Both sides have to agree or NGINX returns a 502, which is itself a useful
+thing to know.
 
-### Where to change what
+## Things that went wrong, and why
 
-| Change | File |
-|---|---|
-| PHP-FPM port or process manager settings | `wordpress/conf/www.conf` |
-| Where NGINX forwards PHP requests | `nginx/conf/nginx.conf` (`fastcgi_pass`) |
-| Published port | `srcs/docker-compose.yml` (`ports`) |
-| TLS protocol versions | `nginx/conf/nginx.conf` (`ssl_protocols`) |
-| Database bind address or tuning | `mariadb/conf/50-server.cnf` |
-| Database or user names | `srcs/.env` |
-| Cache size or eviction policy | `bonus/redis/conf/redis.conf` |
-| Static site content | `bonus/static/site/` |
-| Static site port | `bonus/static/conf/static.conf` and the compose file |
-| Backup schedule | `bonus/backup/conf/backup.cron` |
-| Backup retention | `RETENTION_DAYS` in `srcs/.env` |
-| FTP passive port range | `bonus/ftp/tools/entrypoint.sh` and the compose file |
+`missing separator` from make means spaces where a tab belongs. Recipe lines
+need real tabs.
 
-### Applying a change
+A container that exits immediately has usually daemonised instead of staying in
+the foreground. Each service has its own flag for that.
 
-Configuration files are baked into the images with `COPY`, so editing one
-requires a rebuild:
+Database authentication failing with what looks like the right password is
+almost always the trailing newline. Files generated with `openssl` end with one,
+so always read them with `$(cat file)`, which strips it. Passing the file
+contents around any other way appends `\n` to the password.
 
-```bash
-make down
-make
-```
+A 502 from NGINX means PHP-FPM is unreachable: either the container is down or
+the port in `fastcgi_pass` does not match the one in `www.conf`.
 
-A change limited to `.env` or to the compose file only needs a restart, since
-nothing is rebuilt.
+A build that hangs during `apt-get install` is waiting on an interactive prompt.
+`DEBIAN_FRONTEND=noninteractive` on the install command prevents that.
 
-### Worked example: changing the PHP-FPM port
+pure-ftpd exiting with `421 Unable to switch capabilities` means the container
+lacks the capabilities it needs to drop its own privileges. The service declares
+`DAC_READ_SEARCH`, `SYS_NICE` and `AUDIT_WRITE` for exactly that reason. If FTP
+connects but transfers hang instead, the passive port range is not published or
+does not match what `pure-ftpd -p` was given.
 
-1. In `wordpress/conf/www.conf`, change `listen = 0.0.0.0:9000` to the new port.
-2. In `wordpress/Dockerfile`, update `EXPOSE` to match (documentation only, but
-   keep it consistent).
-3. In `nginx/conf/nginx.conf`, change `fastcgi_pass wordpress:9000;` to the same
-   port.
-4. Rebuild with `make down && make`.
-5. Verify with `curl -kI https://fgalvez-.42.fr`, which should still return 200.
+A backup file of only a few bytes means the dump failed and gzip happily
+compressed nothing. The script exits with an error when the output is under a
+kilobyte, precisely so a silent failure cannot pass for a valid backup.
 
-Both sides must be changed together; the two files must agree or NGINX will
-return a 502.
-
----
-
-## 6. Troubleshooting
-
-**`missing separator` from make.** Recipe lines require a tab character, not
-spaces.
-
-**`${DATA_PATH}` not expanded.** Compose is not finding `.env`. Run through the
-Makefile, or pass `--env-file srcs/.env` explicitly.
-
-**Container exits immediately.** Read `docker logs <name>`. The usual causes are
-a service that daemonised instead of staying in the foreground, or a missing
-directory.
-
-**Database authentication fails with a correct-looking password.** Secret files
-generated with `openssl` end with a newline. Always read them with `$(cat file)`,
-which strips trailing newlines; passing the file content directly appends `\n` to
-the password.
-
-**NGINX returns 502.** PHP-FPM is unreachable. Check that the WordPress container
-is running and that the port in `fastcgi_pass` matches the one in `www.conf`.
-
-**Build hangs during `apt-get install`.** A package is waiting on an interactive
-prompt. Ensure `DEBIAN_FRONTEND=noninteractive` is set on the install command.
-
-**pure-ftpd exits with `421 Unable to switch capabilities`.** The container is
-missing the capabilities pure-ftpd needs to drop its own privileges. The service
-declares `cap_add: [DAC_READ_SEARCH, SYS_NICE, AUDIT_WRITE]` for that reason.
-
-**FTP connects but data transfers hang.** The passive port range must be
-published in the compose file and match the range passed to `pure-ftpd -p`.
-
-**The backup file is suspiciously small.** The dump failed. The script exits
-with an error when the output is under 1 kB, precisely so that a silent failure
-does not pass for a valid backup. Check that the database user in `srcs/.env`
-can reach `mariadb`.
-
-**Redis reports `Drop-in: Invalid`.** The `object-cache.php` drop-in is missing
-or outdated. Regenerate it with
+And if Redis reports an invalid drop-in, regenerate it with
 `docker exec wordpress wp redis enable --allow-root --path=/var/www/html`.
