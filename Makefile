@@ -47,6 +47,7 @@ clean: down
 fclean: clean
 	@docker volume rm $$(docker volume ls -q) 2>/dev/null || true
 	@sudo rm -rf $(DATA_PATH)/wordpress/* $(DATA_PATH)/mariadb/*
+	@sudo rm -rf $(DATA_PATH)/wordpress/* $(DATA_PATH)/mariadb/* $(DATA_PATH)/backup/*
 
 re: fclean all
 
